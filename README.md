@@ -65,3 +65,21 @@ If it works locally but fails in Copilot cloud agent, that suggests a cloud-agen
 ## Notes
 
 This reproduction does not use any custom CA certificates or certificate overrides.
+
+## Results (Copilot cloud agent)
+
+The devcontainer was verified to work in the Copilot cloud agent environment. The following tool versions and paths were observed:
+
+| Tool | Version | Path |
+|------|---------|------|
+| Node | v24.14.0 | `/home/runner/work/_temp/ghcca-node/node/bin/node` |
+| npm | 11.9.0 | `/home/runner/work/_temp/ghcca-node/node/bin/npm` |
+| Python 3 | 3.12.3 | `/usr/bin/python3` |
+| pip | 24.0 | `/usr/lib/python3/dist-packages/pip` |
+
+> **Note:** The `devcontainer.json` requests Node 22 and Python 3.13 via devcontainer features, but the Copilot cloud agent environment provides Node v24.14.0 and Python 3.12.3. This is expected in the cloud agent — features are not installed from scratch inside Docker; instead, pre-installed tooling from the runner image is used.
+
+All HTTPS operations succeeded:
+- `npm view lodash version` → `4.17.23` ✅
+- `python3 -m pip install --user requests` → already satisfied ✅
+- Python SSL default verify paths: `cafile='/etc/ssl/certs/ca-certificates.crt'`, `capath='/etc/ssl/certs'` ✅
