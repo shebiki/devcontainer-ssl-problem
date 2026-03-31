@@ -49,81 +49,82 @@ All `curl` calls — root and non-root — succeed across all lifecycle hooks.
 - `.devcontainer/post-create.sh`
 - `.devcontainer/post-start.sh`
 
-## Notes
+---
 
-This reproduction does not use any custom CA certificates or certificate overrides, and no devcontainer features are installed.
+## Root cause analysis
+
+### What is actually happening
+
+The Copilot cloud agent environment runs a **`padawan-fw`** network firewall that
+performs TLS interception (MITM) on all outbound HTTPS connections from containers.
+To achieve this, it installs a shim at `/usr/bin/runc` — a Bash script that intercepts
+every `runc create` call made by `containerd` when a Docker container starts.
+
+The shim (readable at `/usr/bin/runc` in the runner environment) does the following:
+
+```bash
+CERT_TMP_DIR=$(mktemp -d)                          # creates drwx------ (mode 0700)
+cp "$CERT_PATH" "$CERT_TMP_DIR/ca-certificates.crt"
+chmod 644 "$CERT_TMP_DIR/ca-certificates.crt"      # fixes the FILE — but NOT the DIR
+# ← missing: chmod 755 "$CERT_TMP_DIR"
+```
+
+It then injects bind mounts into the container's OCI `config.json` to overlay
+`$CERT_TMP_DIR` over `/etc/ssl/certs`.
+
+### The bug
+
+`mktemp -d` creates directories with mode `0700` (root-only) by default. The shim
+`chmod 644`s the **cert file** inside the directory, but never makes the **directory
+itself** world-traversable. Result inside every container:
+
+```
+drwx------ 2 root root 4096  /etc/ssl/certs        ← mode 0700
+-rw-r--r-- 1 root root 1655  /etc/ssl/certs/ca-certificates.crt  ← mode 0644
+```
+
+`root` can traverse `0700` directories it owns (via `CAP_DAC_OVERRIDE`/`CAP_DAC_READ_SEARCH`).
+Non-root users cannot. So `curl` as the `vscode` user immediately fails with
+`exit 77` (`CURLE_SSL_CACERT_BADFILE`) when it tries to open the CA bundle path.
+
+### Does this affect the Docker container image?
+
+**No.** The shim operates at the OCI/`runc` layer and injects the bind mount
+unconditionally regardless of what image is used. Testing confirmed **identical
+behaviour** on:
+
+- `mcr.microsoft.com/devcontainers/base:debian-13`
+- `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`
+
+A different base image **would not help**.
+
+### Workaround
+
+Add `sudo chmod 755 /etc/ssl/certs` to the first lifecycle hook (`onCreateCommand`)
+before any non-root network calls. This is already applied in `on-create.sh`.
+
+### Real fix
+
+Change `/usr/bin/runc` (the padawan-fw shim) to add `chmod 755 "$CERT_TMP_DIR"`
+immediately after `mktemp -d`.
 
 ---
 
-## Results
+## Test results (Copilot cloud agent, after workaround)
 
-### Debian-13 (`mcr.microsoft.com/devcontainers/base:debian-13`)
+| Hook | User | curl result |
+|------|------|-------------|
+| `onCreateCommand` | root | ✅ HTTP 200 |
+| `onCreateCommand` | vscode | ✅ HTTP 200 (after `chmod 755 /etc/ssl/certs`) |
+| `updateContentCommand` | vscode | ✅ HTTP 200 |
+| `postCreateCommand` | vscode | ✅ HTTP 200 |
+| `postStartCommand` | vscode | ✅ HTTP 200 |
 
-#### `onCreateCommand` lifecycle hook
+## Test results (without workaround)
 
 | Test | Result |
 |------|--------|
-| root `curl https://github.com` | ✅ HTTP 200 OK |
-| `vscode` user `curl https://github.com` | ❌ exit 77 — `error setting certificate file` |
+| root `curl https://github.com` | ✅ HTTP 200 |
+| `vscode` user `curl https://github.com` | ❌ exit 77 (`CURLE_SSL_CACERT_BADFILE`) |
 
-The `onCreateCommand` fails at the user curl step; subsequent hooks
-(`updateContentCommand`, `postCreateCommand`, `postStartCommand`) are skipped.
-
-#### Manual tests inside the running container
-
-After `devcontainer up` (container stays up despite the hook failure):
-
-```
-# root
-$ docker exec <container> bash -c 'curl -Ivs https://github.com 2>&1 | grep -E "HTTP|error"'
-< HTTP/1.1 200 OK      ✅
-
-# vscode user
-$ docker exec --user vscode <container> curl -Ivs https://github.com
-* error setting certificate file: /etc/ssl/certs/ca-certificates.crt
-curl: (77) ...           ❌
-```
-
-#### Root cause
-
-```
-$ docker exec <container> ls -ld /etc/ssl/certs
-drwx------ 2 root root 4096  /etc/ssl/certs   ← mode 700, root-only
-
-$ docker exec <container> ls -l /etc/ssl/certs/ca-certificates.crt
--rw-r--r-- 1 root root 1655  /etc/ssl/certs/ca-certificates.crt  ← mode 644
-```
-
-The `/etc/ssl/certs` **directory** has mode `700`. The file itself is world-readable
-(`644`), but the non-root `vscode` user cannot traverse the directory to reach it.
-`curl` (exit 77 = `CURLE_SSL_CACERT_BADFILE`) and any other TLS-aware tool fail immediately.
-
----
-
-### Ubuntu-24.04 (`mcr.microsoft.com/devcontainers/base:ubuntu-24.04`)
-
-Identical result. The `/etc/ssl/certs` directory also has mode `700` in this image:
-
-```
-drwx------ 2 root root 4096  /etc/ssl/certs   ← same bug
-```
-
-| Test | Result |
-|------|--------|
-| root `curl https://github.com` | ✅ HTTP 200 OK |
-| `vscode` user `curl https://github.com` | ❌ exit 77 |
-
----
-
-### Conclusion
-
-The `drwx------` permission on `/etc/ssl/certs` is a **bug in the
-`mcr.microsoft.com/devcontainers/base` images** for both `debian-13` and `ubuntu-24.04`.
-It is not expected behaviour — the Debian `ca-certificates` package guarantees this
-directory should be world-executable (`755`) so non-root users can traverse it.
-
-This is a container image issue, not a devcontainer feature issue, and not specific to the
-Python feature. It reproduces on the plain base image with no features installed.
-
-This was confirmed against `devcontainers/images` (no tracking issue found for this
-specific `700` directory permission at the time of testing, 2026-03-31).
+This reproduces identically on both `debian-13` and `ubuntu-24.04` base images.
