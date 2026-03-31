@@ -4,7 +4,3 @@ services:
     command: sleep infinity
     volumes:
       - ..:/workspaces/repro
-      - pip-cache:/home/vscode/.cache/pip
-
-volumes:
-  pip-cache:
