@@ -165,6 +165,35 @@ Verified: `REQUESTS_CA_BUNDLE` does **not** fix `httpx`; `SSL_CERT_FILE` does **
 `requests`. Both env vars must be set. As a bonus `SSL_CERT_FILE` is also honoured by OpenSSL
 itself, so it helps any other tool that respects the standard OpenSSL env vars.
 
+#### Playwright / Chromium — NSS certificate database
+
+Playwright's Chromium is a **separate subprocess** with its own certificate verification stack.
+It does **not** read `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, or any of the Python/Node env vars.
+On Linux, Chromium uses the **NSS certificate database** (`~/.pki/nssdb`).
+
+The fix — equivalent to setting an env var for the other tools — is to register the MITM CA
+there once via `certutil`. This is automated in `post-create.sh`:
+
+```bash
+# 1. Install NSS tools
+sudo apt-get install -y libnss3-tools
+
+# 2. Create (or reuse) the user NSS database
+mkdir -p "${HOME}/.pki/nssdb"
+certutil -d "sql:${HOME}/.pki/nssdb" -N --empty-password
+
+# 3. Extract the padawan-fw MITM CA from the system bundle and register it
+#    (see post-create.sh for the Python snippet that identifies it by issuer)
+certutil -d "sql:${HOME}/.pki/nssdb" -A -n "padawan-fw-mitm" -t "CT,," -i /tmp/mitm-ca.pem
+```
+
+After this, Playwright can navigate to HTTPS sites with **full certificate validation**
+(`ignore_https_errors` is not needed or set).
+
+Note: both `www.python.org` and `github.com` are intercepted by the MITM proxy
+(`subject=O = GoProxy untrusted MITM proxy Inc`). The MITM CA being in the NSS database is
+what makes Chromium trust those connections.
+
 ### Tools NOT yet covered by these env vars
 
 For completeness, if these tools are added to the devcontainer image in the future:
@@ -188,12 +217,12 @@ For completeness, if these tools are added to the devcontainer image in the futu
 
 ### Lifecycle hook results
 
-| Hook | User | curl (root) | curl (vscode) | pip install | uv add | httpx get | npm install |
-|------|------|-------------|---------------|-------------|--------|-----------|-------------|
-| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — |
-| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — |
-| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | ✅ cowsay (41 pkgs) |
-| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — |
+| Hook | User | curl (root) | curl (vscode) | pip install | uv add | httpx get | npm install | playwright screenshots |
+|------|------|-------------|---------------|-------------|--------|-----------|-------------|----------------------|
+| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — | — |
+| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — | — |
+| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | ✅ cowsay (41 pkgs) | ✅ 3 screenshots |
+| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — | — |
 
 Outcome: `{"outcome":"success"}` — all hooks completed without error.
 
@@ -230,5 +259,9 @@ Outcome: `{"outcome":"success"}` — all hooks completed without error.
 | `npm install` without `NODE_EXTRA_CA_CERTS` | ❌ `SELF_SIGNED_CERT_IN_CHAIN` |
 | `yarn add` without `NODE_EXTRA_CA_CERTS` | ❌ `Error: self-signed certificate in certificate chain` |
 | `requests.get()` without `REQUESTS_CA_BUNDLE` | ❌ `CERTIFICATE_VERIFY_FAILED: self-signed certificate` |
+| `httpx.get()` without `SSL_CERT_FILE` | ❌ `CERTIFICATE_VERIFY_FAILED: self-signed certificate` |
+| `httpx.get()` with `REQUESTS_CA_BUNDLE` only | ❌ `CERTIFICATE_VERIFY_FAILED` (httpx does not read `REQUESTS_CA_BUNDLE`) |
+| Playwright Chromium without NSS CA setup | ❌ `ERR_CERT_AUTHORITY_INVALID` |
+| Playwright Chromium with NSS CA + no `ignore_https_errors` | ✅ pages load, screenshots saved |
 
 This reproduces identically on both `debian-13` and `ubuntu-24.04` base images.
