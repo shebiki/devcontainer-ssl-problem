@@ -44,7 +44,18 @@ curl -Ivs https://github.com >/tmp/postcreate-user-curl.txt 2>&1 || {
 cat /tmp/postcreate-user-curl.txt
 
 echo "=== [postCreateCommand] pip install (non-root) ==="
-pip install --user cowsay
+PIP_VENV_DIR="/tmp/postcreate-pip-venv"
+rm -rf "${PIP_VENV_DIR}"
+python3 -m venv "${PIP_VENV_DIR}"
+"${PIP_VENV_DIR}/bin/pip" install --no-input --disable-pip-version-check colorama
+"${PIP_VENV_DIR}/bin/python" -c "import colorama; print(colorama.__version__)"
+
+echo "=== [postCreateCommand] uv install (non-root) ==="
+UV_PROJECT_DIR="/tmp/postcreate-uv-project"
+rm -rf "${UV_PROJECT_DIR}"
+uv init --bare --no-readme --vcs none --no-workspace "${UV_PROJECT_DIR}"
+uv add --project "${UV_PROJECT_DIR}" requests
+uv run --project "${UV_PROJECT_DIR}" python -c "import requests; print(requests.__version__)"
 
 echo "=== [postCreateCommand] npm install (non-root) ==="
 mkdir -p /tmp/npm-test

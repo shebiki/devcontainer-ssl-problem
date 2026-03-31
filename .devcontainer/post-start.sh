@@ -42,3 +42,17 @@ curl -Ivs https://github.com >/tmp/poststart-user-curl.txt 2>&1 || {
   exit 1
 }
 cat /tmp/poststart-user-curl.txt
+
+echo "=== [postStartCommand] pip install (non-root) ==="
+PIP_VENV_DIR="/tmp/poststart-pip-venv"
+rm -rf "${PIP_VENV_DIR}"
+python3 -m venv "${PIP_VENV_DIR}"
+"${PIP_VENV_DIR}/bin/pip" install --no-input --disable-pip-version-check colorama
+"${PIP_VENV_DIR}/bin/python" -c "import colorama; print(colorama.__version__)"
+
+echo "=== [postStartCommand] uv install (non-root) ==="
+UV_PROJECT_DIR="/tmp/poststart-uv-project"
+rm -rf "${UV_PROJECT_DIR}"
+uv init --bare --no-readme --vcs none --no-workspace "${UV_PROJECT_DIR}"
+uv add --project "${UV_PROJECT_DIR}" requests
+uv run --project "${UV_PROJECT_DIR}" python -c "import requests; print(requests.__version__)"
