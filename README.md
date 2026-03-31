@@ -1,130 +1,188 @@
 # Copilot cloud agent devcontainer non-root SSL repro
 
-This repository is a minimal reproduction for a suspected issue in the GitHub Copilot cloud agent when using a devcontainer.
-
-## Summary
-
-The goal is to test whether HTTPS/network operations behave differently for:
-
-- root/setup-time commands, versus
-- the non-root devcontainer user (`vscode`)
-
-inside the Copilot cloud agent environment.
-
-This repo intentionally avoids:
-
-- application code
-- private registries
-- custom CA certificates
-- custom SSL configuration
-- database setup
-
-## What this repo does
-
-The devcontainer runs `curl https://github.com` as both `root` and the non-root `vscode` user in every devcontainer lifecycle hook:
-
-| Hook | Script |
-|------|--------|
-| `onCreateCommand` | `on-create.sh` |
-| `updateContentCommand` | `update-content.sh` |
-| `postCreateCommand` | `post-create.sh` |
-| `postStartCommand` | `post-start.sh` |
-
-Each script:
-1. Prints the current user and `id`
-2. Shows `/etc/ssl/certs/ca-certificates.crt` permissions
-3. Runs `curl -Ivs https://github.com` as **root** (via `sudo bash -lc`)
-4. Runs `curl -Ivs https://github.com` as the **current (non-root) user**
-
-## Expected result
-
-All `curl` calls — root and non-root — succeed across all lifecycle hooks.
-
-## Files
-
-- `.devcontainer/devcontainer.json`
-- `.devcontainer/docker-compose.yml`
-- `.devcontainer/on-create.sh`
-- `.devcontainer/update-content.sh`
-- `.devcontainer/post-create.sh`
-- `.devcontainer/post-start.sh`
+Minimal reproduction for the padawan-fw runc shim SSL bug in the GitHub Copilot cloud
+agent, and an active workbench for testing the devcontainer setup.
 
 ---
 
-## Root cause analysis
+## Root cause
 
-### What is actually happening
+The Copilot cloud agent environment runs **`padawan-fw`**, a network firewall that
+performs TLS interception (MITM) on all outbound HTTPS. It installs a Bash shim at
+`/usr/bin/runc` that intercepts every `runc create` call and injects bind-mounts into
+the container's OCI `config.json` before the real `runc` runs.
 
-The Copilot cloud agent environment runs a **`padawan-fw`** network firewall that
-performs TLS interception (MITM) on all outbound HTTPS connections from containers.
-To achieve this, it installs a shim at `/usr/bin/runc` — a Bash script that intercepts
-every `runc create` call made by `containerd` when a Docker container starts.
-
-The shim (readable at `/usr/bin/runc` in the runner environment) does the following:
+The relevant part of the shim:
 
 ```bash
-CERT_TMP_DIR=$(mktemp -d)                          # creates drwx------ (mode 0700)
+CERT_TMP_DIR=$(mktemp -d)                           # drwx------ (mode 0700)
 cp "$CERT_PATH" "$CERT_TMP_DIR/ca-certificates.crt"
-chmod 644 "$CERT_TMP_DIR/ca-certificates.crt"      # fixes the FILE — but NOT the DIR
-# ← missing: chmod 755 "$CERT_TMP_DIR"
+chmod 644 "$CERT_TMP_DIR/ca-certificates.crt"       # fixes the FILE, not the DIR
+# missing: chmod 755 "$CERT_TMP_DIR"
 ```
 
-It then injects bind mounts into the container's OCI `config.json` to overlay
-`$CERT_TMP_DIR` over `/etc/ssl/certs`.
-
-### The bug
-
-`mktemp -d` creates directories with mode `0700` (root-only) by default. The shim
-`chmod 644`s the **cert file** inside the directory, but never makes the **directory
-itself** world-traversable. Result inside every container:
+Inside every container the result is:
 
 ```
-drwx------ 2 root root 4096  /etc/ssl/certs        ← mode 0700
--rw-r--r-- 1 root root 1655  /etc/ssl/certs/ca-certificates.crt  ← mode 0644
+drwx------ 2 root root  /etc/ssl/certs          ← 0700
+-rw-r--r-- 1 root root  /etc/ssl/certs/ca-certificates.crt  ← 0644
 ```
 
-`root` can traverse `0700` directories it owns (via `CAP_DAC_OVERRIDE`/`CAP_DAC_READ_SEARCH`).
-Non-root users cannot. So `curl` as the `vscode` user immediately fails with
-`exit 77` (`CURLE_SSL_CACERT_BADFILE`) when it tries to open the CA bundle path.
+`root` can traverse the 0700 dir (via `CAP_DAC_OVERRIDE`). Non-root users cannot, so
+`curl` as `vscode` fails immediately with exit 77 (`CURLE_SSL_CACERT_BADFILE`).
 
-### Does this affect the Docker container image?
+The shim runs at the OCI layer and affects every container regardless of the base image.
 
-**No.** The shim operates at the OCI/`runc` layer and injects the bind mount
-unconditionally regardless of what image is used. Testing confirmed **identical
-behaviour** on:
-
-- `mcr.microsoft.com/devcontainers/base:debian-13`
-- `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`
-
-A different base image **would not help**.
-
-### Workaround
-
-Add `sudo chmod 755 /etc/ssl/certs` to the first lifecycle hook (`onCreateCommand`)
-before any non-root network calls. This is already applied in `on-create.sh`.
-
-### Real fix
-
-Change `/usr/bin/runc` (the padawan-fw shim) to add `chmod 755 "$CERT_TMP_DIR"`
-immediately after `mktemp -d`.
+**Real fix:** add `chmod 755 "$CERT_TMP_DIR"` to the padawan-fw shim right after
+`mktemp -d`.
 
 ---
 
-## Test results (Copilot cloud agent, after workaround)
+## Current devcontainer approach
 
-| Hook | User | curl result |
-|------|------|-------------|
-| `onCreateCommand` | root | ✅ HTTP 200 |
-| `onCreateCommand` | vscode | ✅ HTTP 200 (after `chmod 755 /etc/ssl/certs`) |
-| `updateContentCommand` | vscode | ✅ HTTP 200 |
-| `postCreateCommand` | vscode | ✅ HTTP 200 |
-| `postStartCommand` | vscode | ✅ HTTP 200 |
+### Base image
 
-## Test results (without workaround)
+`mcr.microsoft.com/devcontainers/base:trixie` (Debian 13 / Trixie).
 
-| Test | Result |
-|------|--------|
-| root `curl https://github.com` | ✅ HTTP 200 |
-| `vscode` user `curl https://github.com` | ❌ exit 77 (`CURLE_SSL_CACERT_BADFILE`) |
+Chosen because:
+- Debian is the standard base for devcontainers
+- Trixie ships Python 3.13 in its default repos (convenient for the test, though we
+  install via pyenv anyway for version-pinning reasons — see below)
 
-This reproduces identically on both `debian-13` and `ubuntu-24.04` base images.
+### Python and Node: version-pinnable, not system-level
+
+Devcontainer `features` were dropped in favour of tools installed directly in the
+Dockerfile, giving full control over TLS calls during the build:
+
+| Tool | Installed via | Location | Version pin |
+|------|--------------|----------|-------------|
+| Python | **pyenv** (compiled from source) | `/usr/local/pyenv` | `ARG PYTHON_VERSION=3.13` |
+| Node | **nvm** | `/usr/local/nvm` | `ARG NODE_VERSION=lts` |
+
+Both are installed as root to world-readable system-wide paths. Symlinks in
+`/usr/local/bin/` make `python3`, `pip`, `pip3`, `node`, `npm`, `npx` available to
+all users and `sudo`.
+
+To pin a different version, rebuild with a build-arg:
+
+```bash
+docker build --build-arg PYTHON_VERSION=3.12 --build-arg NODE_VERSION=20 \
+  -f .devcontainer/Dockerfile .
+```
+
+### SSL workaround: `chmod 755 /etc/ssl/certs`
+
+Moving to a local Dockerfile means all Dockerfile `RUN` steps execute as root and can
+traverse the 0700-mounted `/etc/ssl/certs` without any cert redirection. So the
+previous workaround machinery was dropped entirely:
+
+- ❌ removed: CA bundle copy to `/usr/local/share/ca-certificates.crt`
+- ❌ removed: `~/.curlrc` cacert overrides
+- ❌ removed: `git config --system http.sslCAInfo`
+- ❌ removed: `/etc/environment` and `/etc/profile.d/ca-bundle-workaround.sh`
+- ❌ removed: `ENV CURL_CA_BUNDLE / GIT_SSL_CAINFO / SSL_CERT_FILE / …` block
+- ❌ removed: `features` block in `devcontainer.json`
+
+Each Dockerfile `RUN` step that makes network calls opens with
+`chmod 755 /etc/ssl/certs` — harmless when the dir is already 755, essential when the
+shim has mounted a 0700 dir.
+
+Each lifecycle hook script opens with `sudo chmod 755 /etc/ssl/certs` for the same
+reason: the shim applies a fresh bind-mount every time a container starts, so
+`postStartCommand` in particular must re-apply the fix on every boot.
+
+---
+
+## Repository structure
+
+```
+.devcontainer/
+  Dockerfile            # trixie base + pyenv Python + nvm Node
+  devcontainer.json     # no features; references docker-compose.yml + hooks
+  docker-compose.yml    # builds Dockerfile; mounts workspace
+  on-create.sh          # onCreateCommand   — chmod fix + version/curl checks
+  update-content.sh     # updateContentCommand — chmod fix + version/curl checks
+  post-create.sh        # postCreateCommand — chmod fix + version/curl/pip/npm checks
+  post-start.sh         # postStartCommand  — chmod fix + version/curl checks
+```
+
+### What each hook script does
+
+1. `sudo chmod 755 /etc/ssl/certs` — shim workaround
+2. `whoami` / `id`
+3. Python and Node version checks (root and non-root)
+4. `ls -l /etc/ssl/certs/ca-certificates.crt`
+5. `curl -Ivs https://github.com` as root and as `vscode`
+6. (`post-create.sh` only) `pip install --user cowsay` and `npm install cowsay`
+
+---
+
+## Current status / what the next agent needs to do
+
+The Dockerfile was written but **the image build has not yet been completed or
+verified**. The build was started and then stopped because it requires outbound access
+to domains that may be firewall-blocked in the runner environment.
+
+### Domains that must be reachable during `docker build`
+
+| Step | Domain(s) needed |
+|------|-----------------|
+| `apt-get update` | `deb.debian.org`, `security.debian.org` |
+| pyenv git clone | `github.com` |
+| pyenv Python build | `www.python.org` (source tarball download) |
+| nvm install script | `raw.githubusercontent.com` |
+| nvm Node download | `nodejs.org` |
+
+### Steps to complete
+
+1. **Verify the domains above are reachable** from a `docker build` container. If any
+   are blocked, ask the user to lift the firewall restriction before proceeding.
+
+2. **Build the image:**
+   ```bash
+   cd /home/runner/work/devcontainer-ssl-problem/devcontainer-ssl-problem
+   docker build --no-cache -t repro-test -f .devcontainer/Dockerfile .
+   ```
+
+3. **Start a container and run the hook scripts manually** (simulating what the
+   devcontainer lifecycle would do):
+   ```bash
+   docker run -d --name repro-test-ctr repro-test sleep infinity
+   docker exec -u vscode repro-test-ctr bash /workspaces/repro/.devcontainer/on-create.sh
+   docker exec -u vscode repro-test-ctr bash /workspaces/repro/.devcontainer/update-content.sh
+   docker exec -u vscode repro-test-ctr bash /workspaces/repro/.devcontainer/post-create.sh
+   docker exec -u vscode repro-test-ctr bash /workspaces/repro/.devcontainer/post-start.sh
+   ```
+
+4. **Run manual version and install checks inside the running container:**
+   ```bash
+   docker exec repro-test-ctr python3 --version
+   docker exec repro-test-ctr pip3 --version
+   docker exec repro-test-ctr node --version
+   docker exec repro-test-ctr npm --version
+   docker exec -u vscode repro-test-ctr python3 --version
+   docker exec -u vscode repro-test-ctr node --version
+   docker exec -u vscode repro-test-ctr pip install --user cowsay
+   docker exec -u vscode repro-test-ctr bash -c 'cd /tmp && npm install cowsay'
+   ```
+
+5. **Summarise hook output and manual check results** and update the
+   [Test results](#test-results) section below.
+
+6. **Commit and push.**
+
+---
+
+## Test results
+
+> **Not yet recorded.** The image build has not been completed. See
+> [Current status](#current-status--what-the-next-agent-needs-to-do) above.
+
+### Expected results (after build succeeds)
+
+| Hook | User | curl | python3 --version | node --version |
+|------|------|------|-------------------|----------------|
+| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ 3.13.x | ✅ LTS |
+| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ 3.13.x | ✅ LTS |
+| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ 3.13.x | ✅ LTS |
+| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ 3.13.x | ✅ LTS |
