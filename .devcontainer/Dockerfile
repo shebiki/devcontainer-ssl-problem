@@ -2,12 +2,23 @@ FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 # The padawan-fw runc shim bind-mounts a mode-0700 tmpdir over /etc/ssl/certs in every
 # container it starts (including Docker build containers), which blocks non-root TLS.
-# This RUN step executes as root (which can traverse 0700) and copies the CA bundle to
-# a world-readable path at image-build time.  The ENV vars below point curl, pip, nvm,
-# and Node.js at that copy so non-root SSL works in all subsequent build layers (feature
-# installation) and at container runtime, with no chmod needed at startup.
+# Root can still traverse 0700, so this RUN step (which runs as root) copies the CA
+# bundle to a world-readable path at image-build time.
+#
+# We then advertise the copy through every mechanism that curl, pip, nvm, and Node.js
+# honour, covering all the contexts used by devcontainer feature installers:
+#   - ~/.curlrc      → read by curl for every user, regardless of env vars or login
+#                      context; fixes the `su vscode -c "curl | bash"` NVM download
+#   - /etc/environment → read by PAM (pam_env) for su and other managed sessions
+#   - /etc/profile.d   → sourced by bash login shells (belt-and-suspenders)
+#   - Docker ENV       → inherited by downstream Dockerfile/feature-build RUN steps
 RUN cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/ca-certificates.crt \
-    && chmod 644 /usr/local/share/ca-certificates.crt
+    && chmod 644 /usr/local/share/ca-certificates.crt \
+    && echo "cacert=/usr/local/share/ca-certificates.crt" > /home/vscode/.curlrc \
+    && echo "cacert=/usr/local/share/ca-certificates.crt" > /root/.curlrc \
+    && printf 'CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt\nSSL_CERT_FILE=/usr/local/share/ca-certificates.crt\nNODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt\nPIP_CERT=/usr/local/share/ca-certificates.crt\n' >> /etc/environment \
+    && printf 'export CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt\nexport SSL_CERT_FILE=/usr/local/share/ca-certificates.crt\nexport NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt\nexport PIP_CERT=/usr/local/share/ca-certificates.crt\n' > /etc/profile.d/ca-bundle-workaround.sh \
+    && chmod 644 /etc/profile.d/ca-bundle-workaround.sh
 
 ENV CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt \
     SSL_CERT_FILE=/usr/local/share/ca-certificates.crt \
