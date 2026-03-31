@@ -112,28 +112,76 @@ immediately after `mktemp -d`.
 
 ## Additional SSL quirk: tools with their own TLS stacks
 
-Beyond the `/etc/ssl/certs` directory permission bug, two common developer tools ship with
-their **own** TLS stacks that do not automatically trust the padawan-fw MITM CA:
+Beyond the `/etc/ssl/certs` directory permission bug, several common developer tools ship
+with their **own** TLS stacks or certificate stores that do **not** automatically trust the
+padawan-fw MITM CA certificate. The fixes are environment variables set in the Dockerfile.
 
-| Tool | TLS stack | Symptom | Fix |
-|------|-----------|---------|-----|
-| **uv** | rustls (default) | `invalid peer certificate: UnknownIssuer` | `ENV UV_NATIVE_TLS=1` — switches uv to OpenSSL, which reads `/etc/ssl/certs` |
-| **npm / Node.js** | Node's own CA store | `SELF_SIGNED_CERT_IN_CHAIN` | `ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` — appends the MITM CA to Node's built-in store |
+### Why each tool category behaves differently
 
-Both env vars are now set in the Dockerfile.
+| Category | How it resolves CAs | Affected? |
+|---|---|---|
+| **curl, git, wget** | libcurl → OpenSSL → reads `/etc/ssl/certs` | ✅ Works (after `chmod 755`) |
+| **Python `ssl` / `urllib`** | CPython SSL → OpenSSL → reads `/usr/lib/ssl/cert.pem` (symlink to `/etc/ssl/certs/ca-certificates.crt`) | ✅ Works |
+| **pip** (the tool) | Uses `ssl.create_default_context()` — same OpenSSL path | ✅ Works |
+| **httpie** | Uses `ssl.create_default_context()` — same OpenSSL path | ✅ Works |
+| **Python `requests` library** | Uses **`certifi`** bundled Mozilla CA store (272 KB), ignores system OpenSSL paths | ❌ Fails |
+| **npm / Node.js** | Node.js ships its own embedded CA store (Mozilla-derived) | ❌ Fails |
+| **yarn v1** (uses Node.js) | Same embedded Node.js CA store | ❌ Fails |
+| **uv** (default) | Ships with **rustls** + bundled WebPKI roots | ❌ Fails |
+| **pnpm** (uses Node.js) | Same embedded Node.js CA store | ❌ Fails (not tested here) |
+| **Deno** (default) | Ships with **rustls** + bundled WebPKI roots | ❌ Fails (not tested here) |
+| **poetry** (uses requests) | Inherits `requests`/certifi behavior | ❌ Fails (not tested here) |
+| **Cargo / Rust** | Depends on compile-time feature (`rustls` or `native-tls`) | ❌ Likely fails with rustls builds (not tested here) |
 
-## Test results (Copilot cloud agent, with all workarounds)
+### Verified failures and fixes
+
+| Tool | TLS stack | Error | Dockerfile fix |
+|------|-----------|-------|----------------|
+| **Python `requests`** | certifi bundle | `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain` | `ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt` |
+| **uv** | rustls (default) | `invalid peer certificate: UnknownIssuer` | `ENV UV_NATIVE_TLS=1` |
+| **npm / yarn / Node.js** | Node.js CA store | `SELF_SIGNED_CERT_IN_CHAIN` | `ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` |
+
+All three env vars are now set in the Dockerfile.
+
+#### Why `REQUESTS_CA_BUNDLE` but not `SSL_CERT_FILE`?
+
+- `SSL_CERT_FILE` is read by OpenSSL (so `urllib`, `pip`, `git`, `curl` etc. all see it)  
+- `requests` bypasses OpenSSL's env-var path and calls `certifi.where()` directly  
+- `REQUESTS_CA_BUNDLE` is the override that `requests` (and libraries built on it like `httpx` in default mode, `poetry`, many CLIs) checks first
+
+### Tools NOT yet covered by these env vars
+
+For completeness, if these tools are added to the devcontainer image in the future:
+
+| Tool | Fix |
+|------|-----|
+| **pnpm** | already covered by `NODE_EXTRA_CA_CERTS` |
+| **yarn v2 / Berry** | `yarn config set httpsCaFilePath /etc/ssl/certs/ca-certificates.crt` |
+| **Deno** | `ENV DENO_CERT=/etc/ssl/certs/ca-certificates.crt` |
+| **Bun** | `ENV NODE_EXTRA_CA_CERTS=...` (Bun respects this) |
+| **poetry** | already covered by `REQUESTS_CA_BUNDLE` |
+| **Cargo** (rustls build) | `ENV CARGO_HTTP_CAINFO=/etc/ssl/certs/ca-certificates.crt` |
+| **Go / `go get`** | Works automatically via system certs (uses `crypto/x509`) |
+| **gh CLI** | Works automatically (Go-based) |
+| **Java / Maven / Gradle** | `keytool -importcert` into the JVM keystore; or set `javax.net.ssl.trustStore` |
+| **Ruby Gems** | `ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` |
+
+---
+
+## Test results (Copilot cloud agent, clean-room run with all workarounds)
 
 ### Lifecycle hook results
 
-| Hook | User | curl | pip install | uv add | npm install |
-|------|------|------|-------------|--------|-------------|
-| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
-| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
-| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ cowsay |
-| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+| Hook | User | curl (root) | curl (vscode) | pip install | uv add | npm install |
+|------|------|-------------|---------------|-------------|--------|-------------|
+| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ cowsay (41 pkgs) |
+| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
 
-### Manual tool versions
+Outcome: `{"outcome":"success"}` — all hooks completed without error.
+
+### Manual tool versions (verified inside running container)
 
 | Tool | Version | Path |
 |------|---------|------|
@@ -141,22 +189,30 @@ Both env vars are now set in the Dockerfile.
 | npm | 11.11.0 | `/usr/local/bin/npm` |
 | Python | 3.13.5 | `/usr/local/bin/python3` |
 | uv | 0.6.6 | `/usr/local/bin/uv` |
+| yarn | 1.22.22 | `/usr/bin/yarn` (pre-installed by base image) |
+| git | 2.50.1 | `/usr/bin/git` |
+| curl | 7.88.1 | `/usr/bin/curl` |
 | nvm | — | not installed (Node is pinned directly in the Dockerfile) |
 
-### Manual install tests
+### Manual install tests (verified inside running container)
 
 | Test | Command | Result |
 |------|---------|--------|
-| `npm install` | `npm install cowsay` | ✅ 41 packages installed |
-| `uv add` | `uv add httpx` | ✅ httpx 0.28.1 installed |
+| `npm install` | `npm install cowsay` | ✅ 41 packages |
+| `yarn add` | `yarn add chalk` | ✅ chalk 5.6.2 |
+| `uv add` | `uv add httpx` | ✅ httpx 0.28.1 |
+| `pip install` | `pip3 install colorama` | ✅ colorama 0.4.6 |
+| `git clone` | `git clone https://github.com/octocat/Hello-World.git` | ✅ cloned |
 
-## Test results (without workaround)
+## Test results (without workarounds)
 
 | Test | Result |
 |------|--------|
-| root `curl https://github.com` | ✅ HTTP 200 |
-| `vscode` user `curl https://github.com` | ❌ exit 77 (`CURLE_SSL_CACERT_BADFILE`) |
-| `uv add` (default rustls) | ❌ `invalid peer certificate: UnknownIssuer` |
-| `npm install` (without `NODE_EXTRA_CA_CERTS`) | ❌ `SELF_SIGNED_CERT_IN_CHAIN` |
+| `curl https://github.com` (non-root, no `chmod 755`) | ❌ exit 77 (`CURLE_SSL_CACERT_BADFILE`) |
+| `curl https://github.com` (root, any time) | ✅ HTTP 200 |
+| `uv add` without `UV_NATIVE_TLS=1` | ❌ `invalid peer certificate: UnknownIssuer` |
+| `npm install` without `NODE_EXTRA_CA_CERTS` | ❌ `SELF_SIGNED_CERT_IN_CHAIN` |
+| `yarn add` without `NODE_EXTRA_CA_CERTS` | ❌ `Error: self-signed certificate in certificate chain` |
+| `requests.get()` without `REQUESTS_CA_BUNDLE` | ❌ `CERTIFICATE_VERIFY_FAILED: self-signed certificate` |
 
 This reproduces identically on both `debian-13` and `ubuntu-24.04` base images.

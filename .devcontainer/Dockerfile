@@ -14,8 +14,11 @@ ENV UV_PYTHON_PREFERENCE=only-system
 ENV UV_PYTHON_DOWNLOADS=never
 # Use native TLS (OpenSSL) so uv trusts the padawan-fw MITM CA from /etc/ssl/certs.
 ENV UV_NATIVE_TLS=1
-# Append the runtime MITM CA bundle to Node's built-in CA store so npm trusts it.
+# Append the runtime MITM CA bundle to Node's built-in CA store so npm/yarn/pnpm trust it.
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+# The Python `requests` library uses its bundled certifi CA store by default (not system
+# OpenSSL). Point it to the system bundle so it trusts the padawan-fw MITM CA at runtime.
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 # Install uv system-wide.
 RUN <<EOF
