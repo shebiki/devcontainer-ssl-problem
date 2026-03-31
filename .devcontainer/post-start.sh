@@ -5,8 +5,17 @@ echo "=== [postStartCommand] user ==="
 whoami
 id
 
-echo "=== [postStartCommand] python version ==="
+echo "=== [postStartCommand] python version (root) ==="
+sudo python3 --version
+
+echo "=== [postStartCommand] python version (vscode) ==="
 python3 --version
+
+echo "=== [postStartCommand] node version (root) ==="
+sudo bash -lc 'node --version'
+
+echo "=== [postStartCommand] node version (vscode) ==="
+node --version
 
 echo "=== [postStartCommand] ssl bundle ==="
 ls -l /etc/ssl/certs/ca-certificates.crt || true

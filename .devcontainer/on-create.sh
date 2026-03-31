@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-# Workaround: the padawan-fw runc shim bind-mounts a temp dir (created with mktemp -d,
-# mode 0700) over /etc/ssl/certs. The shim forgets to chmod 755 the directory,
-# so non-root users cannot traverse it. Fix that here before any curl tests run.
-sudo chmod 755 /etc/ssl/certs
-
 echo "=== [onCreateCommand] user ==="
 whoami
 id
 
-echo "=== [onCreateCommand] python version ==="
+echo "=== [onCreateCommand] python version (root) ==="
+sudo python3 --version
+
+echo "=== [onCreateCommand] python version (vscode) ==="
 python3 --version
+
+echo "=== [onCreateCommand] node version (root) ==="
+sudo bash -lc 'node --version'
+
+echo "=== [onCreateCommand] node version (vscode) ==="
+node --version
 
 echo "=== [onCreateCommand] ssl bundle ==="
 ls -l /etc/ssl/certs/ca-certificates.crt || true
