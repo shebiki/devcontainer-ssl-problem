@@ -10,10 +10,11 @@ ARG UV_VERSION=0.6.6
 ARG PYTHON_VERSION=3.13.2
 ARG NODE_VERSION=24.14.1
 ARG NVM_VERSION=0.40.4
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
+ENV PYENV_ROOT=/opt/pyenv
+ENV PATH=${PYENV_ROOT}/shims:${PYENV_ROOT}/bin:${PATH}
 ENV NVM_DIR=/opt/nvm
 
-# Install uv system-wide (arch-aware direct download), then prepare the Python install dir
+# Install uv system-wide (arch-aware direct download).
 RUN <<EOF
 set -e
 chmod 755 /etc/ssl/certs
@@ -37,16 +38,47 @@ curl -LsSf "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-$
 echo "${UV_SHA256}  /tmp/uv.tar.gz" | sha256sum --check --strict
 tar -xz --strip-components=1 -C /usr/local/bin -f /tmp/uv.tar.gz
 rm /tmp/uv.tar.gz
-mkdir -p /opt/uv/python
-chown -R vscode:vscode /opt/uv
 EOF
 
-# Fetch the pinned Python binary as the non-root user (files will be owned by vscode)
+# Install build dependencies required by pyenv and CPython compilation.
+RUN <<EOF
+set -e
+chmod 755 /etc/ssl/certs
+apt-get update
+apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    libbz2-dev \
+    libffi-dev \
+    liblzma-dev \
+    libncursesw5-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libssl-dev \
+    llvm \
+    make \
+    tk-dev \
+    wget \
+    xz-utils \
+    zlib1g-dev
+rm -rf /var/lib/apt/lists/*
+mkdir -p "${PYENV_ROOT}"
+git clone --depth=1 https://github.com/pyenv/pyenv.git "${PYENV_ROOT}"
+chown -R vscode:vscode "${PYENV_ROOT}"
+EOF
+
+# Install the pinned Python version with pyenv and set it as the global default.
 USER vscode
 RUN <<EOF
 set -e
 sudo chmod 755 /etc/ssl/certs
-uv python install ${PYTHON_VERSION}
+export PYENV_ROOT="${PYENV_ROOT}"
+export PATH="${PYENV_ROOT}/bin:${PATH}"
+eval "$(pyenv init -)"
+pyenv install -s "${PYTHON_VERSION}"
+pyenv global "${PYTHON_VERSION}"
 EOF
 
 # Install nvm and the pinned Node version in a system location.
@@ -76,6 +108,23 @@ EOF
 USER root
 RUN <<EOF
 set -e
+cat >/etc/profile.d/pyenv.sh <<'EOPYENV'
+export PYENV_ROOT="/opt/pyenv"
+export PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:${PATH}"
+
+if command -v pyenv >/dev/null 2>&1; then
+    eval "$(pyenv init -)"
+fi
+EOPYENV
+chmod 0644 /etc/profile.d/pyenv.sh
+grep -qxF '. /etc/profile.d/pyenv.sh' /etc/bash.bashrc || echo '. /etc/profile.d/pyenv.sh' >> /etc/bash.bashrc
+if [ -f /etc/zsh/zshrc ]; then
+    grep -qxF '. /etc/profile.d/pyenv.sh' /etc/zsh/zshrc || echo '. /etc/profile.d/pyenv.sh' >> /etc/zsh/zshrc
+fi
+if [ -f /etc/zshrc ]; then
+    grep -qxF '. /etc/profile.d/pyenv.sh' /etc/zshrc || echo '. /etc/profile.d/pyenv.sh' >> /etc/zshrc
+fi
+
 cat >/etc/profile.d/nvm.sh <<'EONVM'
 export NVM_DIR="/opt/nvm"
 
