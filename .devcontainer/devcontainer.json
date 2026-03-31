@@ -3,14 +3,6 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspaces/repro",
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.13"
-    },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "lts"
-    }
-  },
   "onCreateCommand": "./.devcontainer/on-create.sh",
   "updateContentCommand": "./.devcontainer/update-content.sh",
   "postCreateCommand": "./.devcontainer/post-create.sh",

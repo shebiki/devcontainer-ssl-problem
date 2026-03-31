@@ -1,43 +1,24 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 # The padawan-fw runc shim bind-mounts a mode-0700 tmpdir over /etc/ssl/certs in every
-# container it starts (including Docker build containers), which blocks non-root TLS.
-# Root can still traverse 0700, so this RUN step (which runs as root) copies the CA
-# bundle to a world-readable path at image-build time.
-#
-# We then advertise the copy through every mechanism that curl, git, pip, nvm, and
-# Node.js honour, covering all the contexts used by devcontainer feature installers:
-#   - ~/.curlrc             → read by curl for every user, regardless of env vars or
-#                             login context; fixes the `su vscode -c "curl | bash"`
-#                             NVM installer download
-#   - git config --system   → fixes git's hardcoded /etc/ssl/certs path; used by the
-#                             NVM installer when it falls back to `git clone`
-#   - /etc/environment      → read by PAM (pam_env) for su and other managed sessions
-#   - /etc/profile.d        → sourced by bash login shells (belt-and-suspenders)
-#   - Docker ENV            → inherited by downstream Dockerfile/feature-build RUN steps
-RUN cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/ca-certificates.crt \
-    && chmod 644 /usr/local/share/ca-certificates.crt \
-    && echo "cacert=/usr/local/share/ca-certificates.crt" > /home/vscode/.curlrc \
-    && echo "cacert=/usr/local/share/ca-certificates.crt" > /root/.curlrc \
-    && git config --system http.sslCAInfo /usr/local/share/ca-certificates.crt \
-    && { \
-         echo 'CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt'; \
-         echo 'GIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt'; \
-         echo 'SSL_CERT_FILE=/usr/local/share/ca-certificates.crt'; \
-         echo 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt'; \
-         echo 'PIP_CERT=/usr/local/share/ca-certificates.crt'; \
-       } >> /etc/environment \
-    && { \
-         echo 'export CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt'; \
-         echo 'export GIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt'; \
-         echo 'export SSL_CERT_FILE=/usr/local/share/ca-certificates.crt'; \
-         echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt'; \
-         echo 'export PIP_CERT=/usr/local/share/ca-certificates.crt'; \
-       } > /etc/profile.d/ca-bundle-workaround.sh \
-    && chmod 644 /etc/profile.d/ca-bundle-workaround.sh
+# container it starts (including each Docker build container). Root can already traverse
+# 0700 directories, so all apt/curl calls below work without any cert redirection.
+# Opening each network-touching RUN step with chmod 755 /etc/ssl/certs additionally
+# makes the directory traversable by non-root users within the same RUN step.
 
-ENV CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt \
-    GIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt \
-    SSL_CERT_FILE=/usr/local/share/ca-certificates.crt \
-    NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt \
-    PIP_CERT=/usr/local/share/ca-certificates.crt
+# Install Python 3.13 via deadsnakes PPA
+RUN chmod 755 /etc/ssl/certs \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends python3.13 python3.13-venv \
+    && curl -sSL https://bootstrap.pypa.io/get-pip.py | python3.13 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 100 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node LTS via NodeSource
+RUN chmod 755 /etc/ssl/certs \
+    && curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*

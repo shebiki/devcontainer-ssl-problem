@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
+# The padawan-fw runc shim bind-mounts a mode-0700 tmpdir over /etc/ssl/certs each time
+# this container starts. Repair the permissions so non-root users can traverse the
+# directory and use TLS normally for the lifetime of this container session.
+sudo chmod 755 /etc/ssl/certs
+
 echo "=== [postStartCommand] user ==="
 whoami
 id
