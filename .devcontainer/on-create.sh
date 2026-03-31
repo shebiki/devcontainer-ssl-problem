@@ -12,7 +12,7 @@ echo "=== [onCreateCommand] python version (vscode) ==="
 python3 --version
 
 echo "=== [onCreateCommand] node version (root) ==="
-sudo bash -lc 'node --version'
+sudo "$(which node)" --version
 
 echo "=== [onCreateCommand] node version (vscode) ==="
 node --version

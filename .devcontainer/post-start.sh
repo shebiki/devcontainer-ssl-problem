@@ -12,7 +12,7 @@ echo "=== [postStartCommand] python version (vscode) ==="
 python3 --version
 
 echo "=== [postStartCommand] node version (root) ==="
-sudo bash -lc 'node --version'
+sudo "$(which node)" --version
 
 echo "=== [postStartCommand] node version (vscode) ==="
 node --version
