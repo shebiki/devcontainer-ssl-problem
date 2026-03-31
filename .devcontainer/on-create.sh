@@ -10,6 +10,9 @@ echo "=== [onCreateCommand] user ==="
 whoami
 id
 
+echo "=== [onCreateCommand] python version ==="
+python3 --version
+
 echo "=== [onCreateCommand] ssl bundle ==="
 ls -l /etc/ssl/certs/ca-certificates.crt || true
 

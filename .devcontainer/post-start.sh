@@ -5,6 +5,9 @@ echo "=== [postStartCommand] user ==="
 whoami
 id
 
+echo "=== [postStartCommand] python version ==="
+python3 --version
+
 echo "=== [postStartCommand] ssl bundle ==="
 ls -l /etc/ssl/certs/ca-certificates.crt || true
 

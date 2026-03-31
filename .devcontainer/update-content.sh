@@ -5,6 +5,9 @@ echo "=== [updateContentCommand] user ==="
 whoami
 id
 
+echo "=== [updateContentCommand] python version ==="
+python3 --version
+
 echo "=== [updateContentCommand] ssl bundle ==="
 ls -l /etc/ssl/certs/ca-certificates.crt || true
 
