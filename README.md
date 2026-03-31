@@ -138,16 +138,32 @@ padawan-fw MITM CA certificate. The fixes are environment variables set in the D
 | Tool | TLS stack | Error | Dockerfile fix |
 |------|-----------|-------|----------------|
 | **Python `requests`** | certifi bundle | `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain` | `ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt` |
+| **Python `httpx`** | certifi bundle | `CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain` | `ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` |
 | **uv** | rustls (default) | `invalid peer certificate: UnknownIssuer` | `ENV UV_NATIVE_TLS=1` |
 | **npm / yarn / Node.js** | Node.js CA store | `SELF_SIGNED_CERT_IN_CHAIN` | `ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` |
 
-All three env vars are now set in the Dockerfile.
+All four env vars are now set in the Dockerfile.
 
-#### Why `REQUESTS_CA_BUNDLE` but not `SSL_CERT_FILE`?
+#### `requests` vs `httpx` — same root cause, different env var
 
-- `SSL_CERT_FILE` is read by OpenSSL (so `urllib`, `pip`, `git`, `curl` etc. all see it)  
-- `requests` bypasses OpenSSL's env-var path and calls `certifi.where()` directly  
-- `REQUESTS_CA_BUNDLE` is the override that `requests` (and libraries built on it like `httpx` in default mode, `poetry`, many CLIs) checks first
+Both `requests` and `httpx` default to `certifi.where()` instead of the system OpenSSL paths,
+so they each fail with the same `CERTIFICATE_VERIFY_FAILED` error without an override.
+But they check **different** env vars:
+
+```python
+# requests/_internal/utils.py
+DEFAULT_CA_BUNDLE_PATH = os.environ.get("REQUESTS_CA_BUNDLE") or certifi.where()
+
+# httpx/_config.py
+if trust_env and os.environ.get("SSL_CERT_FILE"):
+    ctx = ssl.create_default_context(cafile=os.environ["SSL_CERT_FILE"])
+else:
+    ctx = ssl.create_default_context(cafile=certifi.where())  # ← MITM cert not in certifi
+```
+
+Verified: `REQUESTS_CA_BUNDLE` does **not** fix `httpx`; `SSL_CERT_FILE` does **not** fix
+`requests`. Both env vars must be set. As a bonus `SSL_CERT_FILE` is also honoured by OpenSSL
+itself, so it helps any other tool that respects the standard OpenSSL env vars.
 
 ### Tools NOT yet covered by these env vars
 
@@ -172,12 +188,12 @@ For completeness, if these tools are added to the devcontainer image in the futu
 
 ### Lifecycle hook results
 
-| Hook | User | curl (root) | curl (vscode) | pip install | uv add | npm install |
-|------|------|-------------|---------------|-------------|--------|-------------|
-| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
-| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
-| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ cowsay (41 pkgs) |
-| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+| Hook | User | curl (root) | curl (vscode) | pip install | uv add | httpx get | npm install |
+|------|------|-------------|---------------|-------------|--------|-----------|-------------|
+| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — |
+| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — |
+| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | ✅ cowsay (41 pkgs) |
+| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ 200 | — |
 
 Outcome: `{"outcome":"success"}` — all hooks completed without error.
 
