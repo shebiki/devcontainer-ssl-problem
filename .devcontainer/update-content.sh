@@ -1,27 +1,44 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-echo "=== updateContent user ==="
+# The padawan-fw runc shim bind-mounts a mode-0700 tmpdir over /etc/ssl/certs when this
+# container was started. Repair the permissions so non-root users can traverse the
+# directory and use TLS normally for the lifetime of this container.
+sudo chmod 755 /etc/ssl/certs
+
+echo "=== [updateContentCommand] user ==="
 whoami
 id
 
-echo "=== filtered env ==="
-env | grep -E 'SSL|REQUESTS|CURL|NODE|NPM|PIP|PYTHON' || true
+echo "=== [updateContentCommand] python version (root) ==="
+sudo python3 --version
 
-echo "=== tool versions ==="
-node --version
-npm --version
+echo "=== [updateContentCommand] python version (vscode) ==="
 python3 --version
-python3 -m pip --version
 
-echo "=== npm https test ==="
-npm view lodash version
+echo "=== [updateContentCommand] node version (root) ==="
+sudo "$(which node)" --version
 
-echo "=== pip https test ==="
-python3 -m pip install --user requests
+echo "=== [updateContentCommand] node version (vscode) ==="
+node --version
 
-echo "=== python ssl defaults ==="
-python3 - <<'PY'
-import ssl
-print(ssl.get_default_verify_paths())
-PY
+echo "=== [updateContentCommand] ssl bundle ==="
+ls -l /etc/ssl/certs/ca-certificates.crt || true
+
+echo "=== [updateContentCommand] root curl ==="
+sudo bash -lc '
+  set -euxo pipefail
+  echo "root curl user: $(whoami)"
+  curl -Ivs https://github.com >/tmp/updatecontent-root-curl.txt 2>&1 || {
+    cat /tmp/updatecontent-root-curl.txt
+    exit 1
+  }
+  cat /tmp/updatecontent-root-curl.txt
+'
+
+echo "=== [updateContentCommand] user curl ==="
+curl -Ivs https://github.com >/tmp/updatecontent-user-curl.txt 2>&1 || {
+  cat /tmp/updatecontent-user-curl.txt
+  exit 1
+}
+cat /tmp/updatecontent-user-curl.txt
