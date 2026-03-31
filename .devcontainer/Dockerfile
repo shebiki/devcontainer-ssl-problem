@@ -12,6 +12,10 @@ ARG NODE_SHA256_X64=84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c33
 ARG NODE_SHA256_ARM64=71e427e28b78846f201d4d5ecc30cb13d1508ca099ef3871889a1256c7d6f67e
 ENV UV_PYTHON_PREFERENCE=only-system
 ENV UV_PYTHON_DOWNLOADS=never
+# Use native TLS (OpenSSL) so uv trusts the padawan-fw MITM CA from /etc/ssl/certs.
+ENV UV_NATIVE_TLS=1
+# Append the runtime MITM CA bundle to Node's built-in CA store so npm trusts it.
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
 # Install uv system-wide.
 RUN <<EOF

@@ -110,15 +110,45 @@ immediately after `mktemp -d`.
 
 ---
 
-## Test results (Copilot cloud agent, after workaround)
+## Additional SSL quirk: tools with their own TLS stacks
 
-| Hook | User | curl result |
-|------|------|-------------|
-| `onCreateCommand` | root | ✅ HTTP 200 |
-| `onCreateCommand` | vscode | ✅ HTTP 200 (after `chmod 755 /etc/ssl/certs`) |
-| `updateContentCommand` | vscode | ✅ HTTP 200 |
-| `postCreateCommand` | vscode | ✅ HTTP 200 |
-| `postStartCommand` | vscode | ✅ HTTP 200 |
+Beyond the `/etc/ssl/certs` directory permission bug, two common developer tools ship with
+their **own** TLS stacks that do not automatically trust the padawan-fw MITM CA:
+
+| Tool | TLS stack | Symptom | Fix |
+|------|-----------|---------|-----|
+| **uv** | rustls (default) | `invalid peer certificate: UnknownIssuer` | `ENV UV_NATIVE_TLS=1` — switches uv to OpenSSL, which reads `/etc/ssl/certs` |
+| **npm / Node.js** | Node's own CA store | `SELF_SIGNED_CERT_IN_CHAIN` | `ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt` — appends the MITM CA to Node's built-in store |
+
+Both env vars are now set in the Dockerfile.
+
+## Test results (Copilot cloud agent, with all workarounds)
+
+### Lifecycle hook results
+
+| Hook | User | curl | pip install | uv add | npm install |
+|------|------|------|-------------|--------|-------------|
+| `onCreateCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+| `updateContentCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+| `postCreateCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | ✅ cowsay |
+| `postStartCommand` | vscode | ✅ HTTP 200 | ✅ colorama 0.4.6 | ✅ requests 2.33.1 | — |
+
+### Manual tool versions
+
+| Tool | Version | Path |
+|------|---------|------|
+| Node.js | v24.14.1 | `/usr/local/bin/node` |
+| npm | 11.11.0 | `/usr/local/bin/npm` |
+| Python | 3.13.5 | `/usr/local/bin/python3` |
+| uv | 0.6.6 | `/usr/local/bin/uv` |
+| nvm | — | not installed (Node is pinned directly in the Dockerfile) |
+
+### Manual install tests
+
+| Test | Command | Result |
+|------|---------|--------|
+| `npm install` | `npm install cowsay` | ✅ 41 packages installed |
+| `uv add` | `uv add httpx` | ✅ httpx 0.28.1 installed |
 
 ## Test results (without workaround)
 
@@ -126,5 +156,7 @@ immediately after `mktemp -d`.
 |------|--------|
 | root `curl https://github.com` | ✅ HTTP 200 |
 | `vscode` user `curl https://github.com` | ❌ exit 77 (`CURLE_SSL_CACERT_BADFILE`) |
+| `uv add` (default rustls) | ❌ `invalid peer certificate: UnknownIssuer` |
+| `npm install` (without `NODE_EXTRA_CA_CERTS`) | ❌ `SELF_SIGNED_CERT_IN_CHAIN` |
 
 This reproduces identically on both `debian-13` and `ubuntu-24.04` base images.
