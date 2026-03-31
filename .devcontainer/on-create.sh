@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-mkdir -p "$HOME/.cache/npm" "$HOME/.cache/pip"
-sudo chown "$(id -u):$(id -g)" "$HOME/.cache" "$HOME/.cache/npm" "$HOME/.cache/pip" || true
+mkdir -p "$HOME/.cache/pip"
+sudo chown "$(id -u):$(id -g)" "$HOME/.cache" "$HOME/.cache/pip" || true
 
 echo "=== user ==="
 whoami
@@ -11,7 +11,7 @@ id
 echo "=== env ==="
 env | sort
 echo "=== filtered env ==="
-env | grep -E 'SSL|REQUESTS|CURL|NODE|NPM|PIP|PYTHON' || true
+env | grep -E 'SSL|REQUESTS|CURL|PIP|PYTHON' || true
 
 echo "=== ssl bundle ==="
 ls -l /etc/ssl/certs || true
@@ -28,7 +28,7 @@ sudo bash -lc '
   set -euxo pipefail
   whoami
   id
-  env | grep -E "SSL|REQUESTS|CURL|NODE|NPM|PIP|PYTHON" || true
+  env | grep -E "SSL|REQUESTS|CURL|PIP|PYTHON" || true
   curl -Ivs https://github.com >/tmp/root-curl.txt 2>&1 || {
     cat /tmp/root-curl.txt
     exit 1

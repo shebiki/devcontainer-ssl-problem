@@ -6,16 +6,11 @@ whoami
 id
 
 echo "=== filtered env ==="
-env | grep -E 'SSL|REQUESTS|CURL|NODE|NPM|PIP|PYTHON' || true
+env | grep -E 'SSL|REQUESTS|CURL|PIP|PYTHON' || true
 
 echo "=== tool versions ==="
-node --version
-npm --version
 python3 --version
 python3 -m pip --version
-
-echo "=== npm https test ==="
-npm view lodash version
 
 echo "=== pip https test ==="
 python3 -m pip install --user requests

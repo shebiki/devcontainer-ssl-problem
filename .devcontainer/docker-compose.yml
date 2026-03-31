@@ -4,9 +4,7 @@ services:
     command: sleep infinity
     volumes:
       - ..:/workspaces/repro
-      - npm-cache:/home/vscode/.cache/npm
       - pip-cache:/home/vscode/.cache/pip
 
 volumes:
-  npm-cache:
   pip-cache:
