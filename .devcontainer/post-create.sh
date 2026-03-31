@@ -39,7 +39,7 @@ curl -Ivs https://github.com >/tmp/postcreate-user-curl.txt 2>&1 || {
 cat /tmp/postcreate-user-curl.txt
 
 echo "=== [postCreateCommand] pip install (non-root) ==="
-pip install cowsay --user
+pip install --user cowsay
 
 echo "=== [postCreateCommand] npm install (non-root) ==="
 mkdir -p /tmp/npm-test

@@ -20,8 +20,20 @@ RUN cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/ca-certificates.crt \
     && echo "cacert=/usr/local/share/ca-certificates.crt" > /home/vscode/.curlrc \
     && echo "cacert=/usr/local/share/ca-certificates.crt" > /root/.curlrc \
     && git config --system http.sslCAInfo /usr/local/share/ca-certificates.crt \
-    && printf 'CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt\nGIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt\nSSL_CERT_FILE=/usr/local/share/ca-certificates.crt\nNODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt\nPIP_CERT=/usr/local/share/ca-certificates.crt\n' >> /etc/environment \
-    && printf 'export CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt\nexport GIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt\nexport SSL_CERT_FILE=/usr/local/share/ca-certificates.crt\nexport NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt\nexport PIP_CERT=/usr/local/share/ca-certificates.crt\n' > /etc/profile.d/ca-bundle-workaround.sh \
+    && { \
+         echo 'CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt'; \
+         echo 'GIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt'; \
+         echo 'SSL_CERT_FILE=/usr/local/share/ca-certificates.crt'; \
+         echo 'NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt'; \
+         echo 'PIP_CERT=/usr/local/share/ca-certificates.crt'; \
+       } >> /etc/environment \
+    && { \
+         echo 'export CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt'; \
+         echo 'export GIT_SSL_CAINFO=/usr/local/share/ca-certificates.crt'; \
+         echo 'export SSL_CERT_FILE=/usr/local/share/ca-certificates.crt'; \
+         echo 'export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates.crt'; \
+         echo 'export PIP_CERT=/usr/local/share/ca-certificates.crt'; \
+       } > /etc/profile.d/ca-bundle-workaround.sh \
     && chmod 644 /etc/profile.d/ca-bundle-workaround.sh
 
 ENV CURL_CA_BUNDLE=/usr/local/share/ca-certificates.crt \
