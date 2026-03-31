@@ -1,8 +1,8 @@
 services:
   app:
-    image: mcr.microsoft.com/devcontainers/base:ubuntu-24.04
-    # chmod 755 /etc/ssl/certs at startup so features (which run pip via su - vscode)
-    # can traverse the directory before onCreateCommand runs.
-    command: bash -c "sudo chmod 755 /etc/ssl/certs && sleep infinity"
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    command: sleep infinity
     volumes:
       - ..:/workspaces/repro
