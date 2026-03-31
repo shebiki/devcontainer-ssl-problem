@@ -1,0 +1,16 @@
+{
+  "name": "copilot-cloud-agent-nonroot-ssl-repro",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/repro",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13"
+    }
+  },
+  "onCreateCommand": "./.devcontainer/on-create.sh",
+  "updateContentCommand": "./.devcontainer/update-content.sh"
+}
