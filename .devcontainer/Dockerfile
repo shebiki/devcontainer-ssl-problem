@@ -19,6 +19,9 @@ ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 # The Python `requests` library uses its bundled certifi CA store by default (not system
 # OpenSSL). Point it to the system bundle so it trusts the padawan-fw MITM CA at runtime.
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+# The Python `httpx` library also defaults to certifi, but respects SSL_CERT_FILE.
+# This also benefits any other tool that honours the standard OpenSSL env var.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Install uv system-wide.
 RUN <<EOF

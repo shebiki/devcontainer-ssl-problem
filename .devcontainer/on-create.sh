@@ -56,3 +56,10 @@ rm -rf "${UV_PROJECT_DIR}"
 uv init --bare --no-readme --vcs none --no-workspace "${UV_PROJECT_DIR}"
 uv add --project "${UV_PROJECT_DIR}" requests
 uv run --project "${UV_PROJECT_DIR}" python -c "import requests; print(requests.__version__)"
+
+echo "=== [onCreateCommand] httpx install (non-root) ==="
+HTTPX_VENV_DIR="/tmp/oncreate-httpx-venv"
+rm -rf "${HTTPX_VENV_DIR}"
+python3 -m venv "${HTTPX_VENV_DIR}"
+"${HTTPX_VENV_DIR}/bin/pip" install --no-input --disable-pip-version-check httpx
+"${HTTPX_VENV_DIR}/bin/python" -c "import httpx; r = httpx.get('https://github.com', timeout=10); print('httpx', httpx.__version__, '->', r.status_code)"

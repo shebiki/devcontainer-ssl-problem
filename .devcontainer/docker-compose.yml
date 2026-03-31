@@ -4,5 +4,7 @@ services:
       context: ..
       dockerfile: .devcontainer/Dockerfile
     command: sleep infinity
+    ports:
+      - "8765:8765"
     volumes:
       - ..:/workspaces/repro
